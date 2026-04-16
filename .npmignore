@@ -1,0 +1,17 @@
+src/
+example/
+tests/
+node_modules/
+.github/
+.vscode/
+.idea/
+*.log
+logs/
+coverage/
+.nyc_output/
+tsconfig.json
+vitest.config.ts
+.gitignore
+.eslintrc*
+.prettierrc*
+CONTRIBUTING.md
