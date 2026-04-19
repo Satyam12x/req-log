@@ -1,6 +1,6 @@
 import { LogEntry } from '../types';
 import { colorStatus, colorMethod, colorDuration, COLORS } from '../utils/colors';
-import { safeStringify, sanitizeString } from '../utils/sanitize';
+import { safeStringify } from '../utils/sanitize';
 
 export function defaultFormat(
   entry: LogEntry,
@@ -88,7 +88,9 @@ export function defaultFormat(
     parts.push(`${gray}headers=${safeStringify(entry.headers, maxFieldSize)}${reset}`);
   }
 
-  // Final pass: any part that somehow contains CR/LF from a field we didn't
-  // explicitly sanitize gets cleaned up, so log lines are always one-per-line.
-  return parts.map(sanitizeString).join(' ');
+  // User-controlled fields (url, userAgent, referer, requestId) are already
+  // sanitized in buildEntry. Logger-produced fields (method/status/duration/
+  // route/handler/ip/protocol/hostname/timestamp) can't carry CR/LF, and
+  // safeStringify output has them JSON-escaped. A second pass is redundant.
+  return parts.join(' ');
 }
