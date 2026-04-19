@@ -10,8 +10,13 @@ import {
   sanitizeString,
   redactObject,
   redactDeep,
+  buildRedactSet,
   DEFAULT_REDACT_KEYS,
 } from './utils/sanitize';
+
+// Handler names are stable per route object. Cache lookups so the
+// layer scan only runs on first request to each route.
+const handlerNameCache = new WeakMap<object, string>();
 
 function getHandlerName(req: Request): string | undefined {
   const route = req.route;
@@ -19,15 +24,21 @@ function getHandlerName(req: Request): string | undefined {
     return undefined;
   }
 
+  const cached = handlerNameCache.get(route);
+  if (cached !== undefined) return cached;
+
+  let resolved = '<anonymous>';
   for (let i = route.stack.length - 1; i >= 0; i--) {
     const layer = route.stack[i];
     const name = layer?.handle?.name;
     if (name && name !== '<anonymous>' && name !== 'anonymous') {
-      return name;
+      resolved = name;
+      break;
     }
   }
 
-  return '<anonymous>';
+  handlerNameCache.set(route, resolved);
+  return resolved;
 }
 
 function buildEntry(
@@ -35,7 +46,7 @@ function buildEntry(
   res: Response,
   duration: number,
   fields: LogField[],
-  redactKeys: string[]
+  redactSet: Set<string>
 ): LogEntry {
   const entry: LogEntry = {};
 
@@ -79,11 +90,11 @@ function buildEntry(
       case 'headers':
         entry.headers = redactObject(
           req.headers as Record<string, unknown>,
-          redactKeys
+          redactSet
         );
         break;
       case 'body':
-        entry.body = redactDeep(req.body, redactKeys);
+        entry.body = redactDeep(req.body, redactSet);
         break;
       case 'query':
         entry.query = req.query as Record<string, unknown>;
@@ -119,7 +130,7 @@ export function requestLogger(options: LoggerOptions = {}) {
   const requestIdHeader =
     options.requestIdHeader === undefined ? 'x-request-id' : options.requestIdHeader;
   const generateRequestId = options.generateRequestId ?? randomUUID;
-  const redactKeys = options.redact ?? DEFAULT_REDACT_KEYS;
+  const redactSet = buildRedactSet(options.redact ?? DEFAULT_REDACT_KEYS);
   const maxFieldSize = options.maxFieldSize ?? 2048;
 
   // Request ID is only attached when a header name is configured.
@@ -127,13 +138,13 @@ export function requestLogger(options: LoggerOptions = {}) {
   // and response echoing, even if `requestId` is in the fields list
   // (the field will just be undefined in the log).
   const requestIdEnabled = requestIdHeader !== false;
+  const headerName = requestIdEnabled ? (requestIdHeader as string) : '';
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const start = startTimer();
     let logged = false;
 
     if (requestIdEnabled && !req.id) {
-      const headerName = requestIdHeader as string;
       const incoming = req.get(headerName);
       req.id = incoming ? sanitizeString(incoming) : generateRequestId();
       res.setHeader(headerName, req.id);
@@ -147,7 +158,7 @@ export function requestLogger(options: LoggerOptions = {}) {
         if (skip && skip(req, res)) return;
 
         const duration = getDuration(start);
-        const entry = buildEntry(req, res, duration, fields, redactKeys);
+        const entry = buildEntry(req, res, duration, fields, redactSet);
 
         const message = format === 'json'
           ? jsonFormat(entry, maxFieldSize)
